@@ -10,8 +10,11 @@ from fastapi.responses import JSONResponse, Response
 
 from . import storage
 from .db import init_db
-from .errors import ApiError
-from .models import (CheckAck, InstanceOut, PackageOut, ReportList, ReportOut)
+from .errors import ApiError, BadPayload
+from .models import (
+    CheckAck, InstanceOut, IntakeOut, PackageOut, ReportList, ReportOut,
+    RevalidateAck,
+)
 
 
 @asynccontextmanager
@@ -139,7 +142,53 @@ def get_report(report_id: str):
          summary="下载报告保存的两份原始依据与实例（instance|xsd|calc）")
 def report_snapshot(report_id: str, kind: str):
     if kind not in ("instance", "xsd", "calc"):
-        from .errors import BadPayload
         raise BadPayload("kind must be one of instance, xsd, calc")
     data, media = storage.get_report_snapshot(report_id, kind)
+    return Response(content=data, media_type=media)
+
+
+# ------------------------------------------------------------- quarantine intakes
+@app.post("/packages/{package_id}/intakes", response_model=IntakeOut,
+          status_code=201, tags=["intakes"],
+          summary="待核收件：仅当概念未被当前 XSD 声明时收留原文，其余结构错误照旧 422 拒收")
+async def create_intake(
+    package_id: str,
+    instance: UploadFile = File(..., description="待核 XBRL 实例原文"),
+):
+    return storage.create_intake(package_id, await instance.read())
+
+
+@app.post("/intakes/{intake_id}/revalidate", response_model=RevalidateAck,
+          tags=["intakes"],
+          summary="按客户端所见关系包修订重验；通过则原文字节正式入库，"
+                  "修订已变更则 412，并发重验 409")
+def revalidate_intake(
+    intake_id: str,
+    expected_package_revision: int = Header(
+        ..., alias="Expected-Package-Revision",
+        description="客户端所见关系包修订；与服务器当前修订不一致即拒绝发布",
+    ),
+):
+    return storage.revalidate_intake(intake_id, expected_package_revision)
+
+
+@app.get("/intakes", response_model=list[IntakeOut], tags=["intakes"],
+         summary="待核收件列表（可按 package_id / status=pending|accepted 过滤）")
+def list_intakes(
+    package_id: Optional[str] = Query(None),
+    status: Optional[str] = Query(None, pattern="^(pending|accepted)$"),
+):
+    return storage.list_intakes(package_id, status)
+
+
+@app.get("/intakes/{intake_id}", response_model=IntakeOut, tags=["intakes"],
+         summary="待核收件详情（状态、未声明概念、最近一次重验结果）")
+def get_intake(intake_id: str):
+    return storage.get_intake(intake_id)
+
+
+@app.get("/intakes/{intake_id}/raw", tags=["intakes"],
+         summary="下载待核区保存的原始 XML 字节（永不覆盖）")
+def get_intake_raw(intake_id: str):
+    data, media = storage.get_intake_raw(intake_id)
     return Response(content=data, media_type=media)

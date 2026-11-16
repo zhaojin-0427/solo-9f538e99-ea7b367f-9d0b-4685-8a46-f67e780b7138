@@ -83,6 +83,26 @@ CREATE TABLE IF NOT EXISTS reports (
 );
 
 CREATE INDEX IF NOT EXISTS idx_reports_instance ON reports(instance_id, created_at);
+
+CREATE TABLE IF NOT EXISTS intakes (
+    id                    TEXT PRIMARY KEY,
+    package_id            TEXT NOT NULL REFERENCES packages(id),
+    package_revision      INTEGER NOT NULL,          -- package revision seen by the client at upload
+    status                TEXT NOT NULL,             -- pending | accepted
+    instance_raw          BLOB NOT NULL,             -- original, never overwritten bytes
+    entity                TEXT NOT NULL,
+    period                TEXT NOT NULL,
+    currency              TEXT NOT NULL,
+    facts_json            TEXT NOT NULL,
+    unknown_concepts_json TEXT NOT NULL,
+    last_revalidate_json  TEXT,                      -- latest revalidation attempt (any outcome)
+    instance_id           TEXT REFERENCES instances(id),  -- set once, only on acceptance
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_intakes_package ON intakes(package_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_intakes_status ON intakes(status);
 """
 
 

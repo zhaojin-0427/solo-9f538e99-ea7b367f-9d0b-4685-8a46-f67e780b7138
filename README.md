@@ -31,6 +31,32 @@
   可通过 `/reports/{id}/snapshots/{instance|xsd|calc}` 原样下载。
 - 数据全部在 SQLite（WAL 模式）+ 命名卷 `/data` 中，**重启后报告与快照仍可查**。
 
+## 待核收件（概念未声明的新科目）
+
+入仓实例引用了当前关系包 XSD 尚未声明的概念时，普通实例接口照旧 422 拒收；
+待核收件接口把**原文**留在待核区，等关系包补齐声明后再重验发布。
+
+- `POST /packages/{id}/intakes`：上传时仍强校验 XML 良构、单实体/单期间/单币种、
+  无维度、数值与 `decimals`、重复事实、数量上限等**全部既有结构规则**；
+  **仅当**存在未被当前 XSD 声明的概念时才收留（201），并记录上传时客户端所见的
+  关系包修订 `package_revision`。其他结构错误照旧 422，当前包已能受理的实例也不收。
+- 待核状态、结构信息、未声明概念清单与原文可通过
+  `GET /intakes`（可按 `package_id`、`status=pending|accepted` 过滤）、
+  `GET /intakes/{id}`、`GET /intakes/{id}/raw` 查询，原文字节永不覆盖。
+- 关系包更新后 `POST /intakes/{id}/revalidate`（头 `Expected-Package-Revision`）
+  按客户端所见修订重验：
+  - 所见修订与服务器当前修订不一致（含重验期间关系包再次变更）→ `412 stale_revision`，
+    拒绝发布，待核记录保持原状。
+  - 重验仍不通过 → 200，保留 `pending` 状态、原文与失败原因
+    （`last_revalidation`，含错误码与信息），不产生任何实例。
+  - 重验通过 → 200，**原文字节**作为正式实例（rev 1）入库，待核记录转为
+    `accepted` 并指向该实例；事务内逐字节核对入库内容与待核原文一致。
+- 并发或重复重验：同一待核记录同时只允许一个重验（进行中的并发请求得
+  `409 revalidation_in_progress`）；已受理后的重复重验幂等返回同一实例，
+  **至多创建一份实例**。发布是单条原子事务（`BEGIN IMMEDIATE` … `COMMIT`），
+  失败整体回滚，不会留下半份实例或已受理状态。
+- 发布出的实例走原有实例/报告接口，核查、快照、历史等能力不变。
+
 ## 启动（Docker Compose）
 
 ```bash
@@ -56,6 +82,10 @@ docker compose up --build
 | GET | `/instances/{id}/reports` | 当前报告 + 全部历史（含过期、迟到） |
 | GET | `/reports/{id}` | 单份报告 |
 | GET | `/reports/{id}/snapshots/{kind}` | 下载报告保存的原始依据 |
+| POST | `/packages/{id}/intakes` | 待核收件：仅因概念未声明而收留原文（201），其余错误照旧 422 |
+| POST | `/intakes/{id}/revalidate` | 按所见关系包修订重验（头 `Expected-Package-Revision`） |
+| GET | `/intakes`、`/intakes/{id}` | 待核列表（可过滤）/详情（状态、原因、指向的实例） |
+| GET | `/intakes/{id}/raw` | 下载待核区原始 XML 字节 |
 
 ## 本地开发与自测
 
@@ -68,7 +98,7 @@ uv venv .venv && uv pip install -r requirements.txt pytest httpx -p .venv
 
 ```
 app/            FastAPI 应用、解析器、求解器、SQLite 持久化
-tests/          28 个端到端/单元测试 + 样本 XBRL
+tests/          40 个端到端/单元测试 + 样本 XBRL
 scripts/        容器首启演示数据播种
 Dockerfile, docker-compose.yml
 ```

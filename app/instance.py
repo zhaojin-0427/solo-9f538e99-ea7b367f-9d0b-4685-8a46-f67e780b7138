@@ -31,7 +31,18 @@ def _decimals_interval(value: Decimal, decimals: object) -> tuple[Decimal, Decim
     return value - half, value + half
 
 
-def parse_instance(data: bytes, package_info: dict) -> dict:
+def parse_instance(data: bytes, package_info: dict,
+                   allow_unknown_concepts: bool = False) -> dict:
+    """Parse and validate an XBRL instance.
+
+    Every structural rule (well-formed XML, one entity/period/currency, no
+    dimensions, numeric values, decimals, duplicates, limits) is always
+    enforced.  By default a fact whose concept is not declared by the package
+    XSD is rejected like any other error.  With ``allow_unknown_concepts``
+    set, those facts are collected and returned instead: this is the
+    quarantine intake path, where only the missing XSD declaration may keep
+    the filing out of the warehouse.
+    """
     root = _parse_xml(data)
     qname = etree.QName(root)
     if qname.namespace != XBRLI or qname.localname != "xbrl":
@@ -40,6 +51,7 @@ def parse_instance(data: bytes, package_info: dict) -> dict:
     target_ns = package_info["target_ns"]
     prefix = package_info["prefix"]
     known_locals = {c.split(":", 1)[1] for c in package_info["concepts"]}
+    unknown_concepts: list[str] = []
 
     # ---- contexts: one entity, one period, no dimensions ------------------
     contexts: dict[str, dict] = {}
@@ -125,7 +137,11 @@ def parse_instance(data: bytes, package_info: dict) -> dict:
                 f"targetNamespace {target_ns}"
             )
         if fq.localname not in known_locals:
-            raise BadPayload(f"fact concept '{fq.localname}' is not declared in the package XSD")
+            if not allow_unknown_concepts:
+                raise BadPayload(
+                    f"fact concept '{fq.localname}' is not declared in the package XSD"
+                )
+            unknown_concepts.append(fq.localname)
         if el.get("unitRef") is None:
             raise BadPayload(f"numeric fact '{fq.localname}' needs a unitRef")
         unit_ref = el.get("unitRef")
@@ -180,6 +196,7 @@ def parse_instance(data: bytes, package_info: dict) -> dict:
         "period": period,
         "currency": currency,
         "facts": facts,
+        "unknown_concepts": sorted(set(unknown_concepts)),
     }
 
 

@@ -28,3 +28,8 @@ class StaleRevision(ApiError):
 class LimitExceeded(ApiError):
     def __init__(self, message: str):
         super().__init__(422, "limit_exceeded", message)
+
+
+class Conflict(ApiError):
+    def __init__(self, message: str, code: str = "conflict"):
+        super().__init__(409, code, message)

@@ -114,3 +114,33 @@ class ReportList(BaseModel):
     instance_id: str
     current: Optional[ReportOut] = None
     history: list[ReportOut]
+
+
+class RevalidationOut(BaseModel):
+    attempted_at: str
+    package_revision: int
+    result: Literal["accepted", "failed"]
+    error_code: Optional[str] = None
+    message: Optional[str] = None
+    instance_id: Optional[str] = None
+
+
+class IntakeOut(BaseModel):
+    intake_id: str
+    package_id: str
+    package_revision: int
+    status: Literal["pending", "accepted"]
+    entity: str
+    period: str
+    currency: str
+    facts: list[Fact]
+    unknown_concepts: list[str]
+    last_revalidation: Optional[RevalidationOut] = None
+    instance_id: Optional[str] = None
+    created_at: str
+    updated_at: str
+
+
+class RevalidateAck(BaseModel):
+    intake: IntakeOut
+    instance: Optional[InstanceOut] = None
